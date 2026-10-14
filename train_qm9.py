@@ -107,7 +107,7 @@ def evaluate(model, loader, task, name, device):
     total_loss = 0
     for data in tqdm(loader, desc=f"Evaluate {name}: "):
         data = data.to(device)
-        outputs, track_osc = model(x = data.x, egde_index = data.edge_index, batch = data.batch)
+        outputs, track_osc = model(x = data.x, edge_index = data.edge_index, batch = data.batch)
         targets = data.y[:, task].reshape(-1, 1)
         loss = loss_function(outputs, targets)
 
