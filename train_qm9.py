@@ -165,6 +165,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0)
 
     ema = EMA(model, beta=args.beta_ema, update_every=10, update_after_step=200)
+    ema.to(device)
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
 
