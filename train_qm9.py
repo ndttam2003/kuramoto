@@ -72,7 +72,7 @@ def get_args():
 
     return args
 
-def train_one_epoch(model, ema, optimizer, loader, epoch, logger,task, accelerator, writer,  scheduler):
+def train_one_epoch(model, ema, optimizer, loader, epoch, task, accelerator,  scheduler):
     model.train()
     epoch_loss = 0.0
     
@@ -96,13 +96,9 @@ def train_one_epoch(model, ema, optimizer, loader, epoch, logger,task, accelerat
         
 
     total_loss = epoch_loss / len(loader)
-    if accelerator.is_main_process:
-        logger.info(f"[Epoch {epoch}] Training Loss: {total_loss:.4f}")
-
-    if accelerator.is_main_process:
-        writer.add_scalar("training loss", total_loss, epoch)
     
-    return epoch_loss
+    
+    return total_loss
 
 @torch.no_grad
 def evaluate(model, loader, task, name, device):
@@ -177,8 +173,13 @@ def main():
     scheduler = LinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters)
 
     for epoch in range(0, args.epochs):
-        total_loss = train_one_epoch(model, ema, optimizer, train_loader, epoch, logger, 
-                                     task=args.task, accelerator=accelerator, writer=writer, scheduler=scheduler)
+        total_loss = train_one_epoch(model, ema, optimizer, train_loader, epoch,  
+                                     task=args.task, accelerator=accelerator, scheduler=scheduler)
+        if accelerator.is_main_process:
+                logger.info(f"[Epoch {epoch}] Training Loss: {total_loss:.4f}")
+        
+        if accelerator.is_main_process:
+            writer.add_scalar("training loss", total_loss, epoch)
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
             # save_checkpoint(
