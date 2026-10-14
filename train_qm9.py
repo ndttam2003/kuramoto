@@ -144,7 +144,7 @@ def main():
     import json
     if accelerator.is_main_process:
         logger.info(json.dumps(str(vars(args)), indent=4))
-    train_loader, val_loader, test_loader = get_train_val_test(args.batchsize, num_workers=args.num_workers)
+    train_loader, val_loader, test_loader = get_train_val_test(args.data_path, args.batchsize, num_workers=args.num_workers)
 
     if accelerator.is_main_process:
         writer = SummaryWriter(jobdir)
