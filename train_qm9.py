@@ -35,6 +35,7 @@ def create_logger(logging_dir):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project_name", type=str, required=True)
+    parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--seed", type=int, default=593)
     parser.add_argument("--epochs", type=int, default=500, help="num of epochs")
     # parser.add_argument(
@@ -141,8 +142,8 @@ def main():
         else:
             logger = create_logger(jobdir)
     import json
-
-    logger.info(json.dumps(str(vars(args)), indent=4))
+    if accelerator.is_main_process:
+        logger.info(json.dumps(str(vars(args)), indent=4))
     train_loader, val_loader, test_loader = get_train_val_test(args.batchsize, num_workers=args.num_workers)
 
     if accelerator.is_main_process:

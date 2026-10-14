@@ -23,8 +23,8 @@ def transfrom_data(data):
     data.relatix_matrix = relatix_matrix
     return data
 
-def get_train_val_test(BATCH_SIZE, num_workers):
-    data_path = "/home/tam/code_base/my_egnn/"
+def get_train_val_test(data_path, BATCH_SIZE, num_workers):
+    # data_path = "/home/tam/code_base/my_egnn/"
 
     qm9_dataset = torch_geometric.datasets.QM9(root=data_path)
     qm9_dataset_transformed = qm9_dataset
