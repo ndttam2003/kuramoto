@@ -12,6 +12,7 @@ class AttentionMessagePassing(nn.Module):
         super(AttentionMessagePassing, self).__init__()
         self.hidden_dim = hidden_dim
         self.num_head = num_head
+        print(hidden_dim, num_head)
         assert hidden_dim // num_head != 0
         self.W_qkv = nn.Linear(hidden_dim + edge_dim, hidden_dim * 3, bias=False)
         self.W_o = nn.Linear(hidden_dim, hidden_dim, bias=False)
