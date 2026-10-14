@@ -191,14 +191,14 @@ def main():
             #     checkpoint_dir=jobdir,
             # )
             # save_model(ema, epoch, checkpoint_dir=jobdir, prefix="ema")
-            val_loss = evaluate(model=model, loader=val_loader, task=args.task, name="validation")
+            val_loss = evaluate(model=model, loader=val_loader, task=args.task, name="validation", device=device)
             writer.add_scalar("validation loss", val_loss, epoch)
             logger.info(f"[Epoch {epoch}] validation Loss: {val_loss:.4f}")
             
 
             
     if accelerator.is_main_process:
-        test_loss = evaluate(model=model, loader=test_loader, task=args.task, name="test")
+        test_loss = evaluate(model=model, loader=test_loader, task=args.task, name="test", device=device)
         writer.add_scalar("test loss", test_loss, epoch)
         logger.info(f"test Loss: {val_loss:.4f}")
         torch.save(
