@@ -2,13 +2,6 @@ import torch
 import os
 from torch.optim.lr_scheduler import _LRScheduler
 
-
-def add_gradient_histograms(writer, model, epoch):
-    for name, param in model.named_parameters():
-        if param.grad is not None:
-            writer.add_histogram(name + "/grad", param.grad, epoch)
-
-
 def save_model(model, epoch, checkpoint_dir, prefix="checkpoint"):
 
     if not os.path.exists(checkpoint_dir):

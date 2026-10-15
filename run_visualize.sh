@@ -1,0 +1,17 @@
+python visualize.py \
+    --data_path "/home/tam/code_base/my_egnn" \
+    --project_name qm9_0 \
+    --seed 593 \
+    --epochs 500 \
+    --lr 1e-3 \
+    --batchsize 128 \
+    --num_workers 2 \
+    --L 1 \
+    --T 8 \
+    --message_passing_type attn \
+    --readout_type gat \
+    --num_head 8 \
+    --osc_dim 4 \
+    --hidden_dim 256 \
+    --task 0 \
+    --gamma 1.0
