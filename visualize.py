@@ -31,7 +31,7 @@ model = KuramotoGNN(
     )
 
 checkpoint = torch.load(
-    "model.zip",
+    "./gat/model.zip",
     map_location="cpu",
     weights_only=True,
 )
@@ -41,11 +41,12 @@ model.eval()
 ema = EMA(model, beta=args.beta_ema, update_every=10, update_after_step=200)
 
 checkpoint = torch.load(
-    "ema_model.zip",
+    "./gat/ema_model.zip",
     map_location="cpu",
     weights_only=True,
 )
 ema.load_state_dict(checkpoint)
+ema = ema.ema_model
 
 qm9_dataset = torch_geometric.datasets.QM9(root=args.data_path)
 print(qm9_dataset)
@@ -55,6 +56,8 @@ def visualize_pyg_spring_layout(
     x,
     edge_index,
     raw_labels,
+    lt = None,
+    normalize = False,
     sim_threshold: float = 0.2,
     node_size: int = 150,
     seed: int = 42,
@@ -81,6 +84,9 @@ def visualize_pyg_spring_layout(
 
     # 2. Chuẩn hóa L2 để vector pha nằm trên mặt cầu đơn vị
     # print(torch.linalg.norm(x.reshape(num_nodes,-1, args.osc_dim), dim=-1))
+    # if normalize:
+    #     x_norm = F.normalize(x.reshape(num_nodes,-1, args.osc_dim), p=2, dim=-1).reshape(num_nodes, -1)
+    # else:
     x_norm = x #F.normalize(x.reshape(num_nodes,-1, args.osc_dim), p=2, dim=-1)
 
     # 3. Khởi tạo đồ thị NetworkX
@@ -95,6 +101,10 @@ def visualize_pyg_spring_layout(
     edges_to_draw = []
 
     x_osc = x.reshape(num_nodes,-1, args.osc_dim)
+    if normalize:
+        x_osc = x
+        x_osc = F.normalize(x_osc, p=2, dim=-1)
+        print(x_osc.shape)
     for u, v in zip(src, dst):
         if u < v:  # Đồ thị vô hướng: chỉ xét mỗi cặp một lần
             # Tích vô hướng của 2 vector đã chuẩn hóa L2 chính là Cosine Similarity
@@ -104,7 +114,7 @@ def visualize_pyg_spring_layout(
 
             # Chỉ giữ cạnh nếu 2 node có độ đồng bộ cao hơn ngưỡng
             if sim > sim_threshold:
-                sim = sim * 5
+                # sim = sim * 5
                 G.add_edge(u, v, weight=sim)
                 edges_to_draw.append((u, v))
                 edge_weights.append(sim)
@@ -184,15 +194,219 @@ def visualize_pyg_spring_layout(
         ax=ax,
     )
 
+    l, t = lt
     ax.set_title(
-        f"Spring Layout Phase Synchronization\n(Edges with Cosine Sim > {sim_threshold})",
+        f"Spring Layout Phase Synchronization\n(Edges with Cosine Sim > {sim_threshold}), L = {l}, T = {t}",
         fontsize=13,
     )
     ax.axis("off")
     plt.tight_layout()
     plt.show()
 
-sample = qm9_dataset[100]
+
+def visualize_pyg_spring_layout_2(
+    x,
+    edge_index,
+    raw_labels=None,
+    lt=None,
+    normalize=True,  # Chuẩn hóa L2 giống F.normalize(v, dim=1) trong model_preds
+    use_pca=True,  # Bật PCA giống apply_pca_torch trong eval của tác giả
+    pca_dim=128,  # Số chiều nén PCA (tác giả mặc định là 128)
+    osc_dim=None,  # Số chiều n của từng oscillator (nếu có, VD: 4)
+    sim_threshold=0.2,
+    node_size=200,
+    seed=42,
+    show_edge_weights=True,
+    show_node_labels=True,
+):
+    """Trực quan hóa sự đồng bộ pha trên đồ thị theo đúng pipeline của AKOrN:
+
+    1. L2 Normalize (per node hoặc per oscillator)
+    2. PCA giảm chiều (như apply_pca_torch)
+    3. Tính Cosine Similarity trên không gian PCA
+    4. Dùng PCA 1-3 làm màu RGB
+    5. Spring layout theo trọng số đồng bộ
+    """
+    # 1. Chuyển tensor sang CPU nếu cần
+    if isinstance(x, torch.Tensor):
+        x = x.detach().cpu()
+    else:
+        x = torch.tensor(x, dtype=torch.float32)
+
+    if isinstance(edge_index, torch.Tensor):
+        edge_index = edge_index.detach().cpu()
+
+    num_nodes, D = x.shape
+
+    # 2. BƯỚC 1 CỦA TÁC GIẢ: CHUẨN HÓA L2
+    if normalize:
+        if osc_dim is not None and osc_dim > 1:
+            # Nếu truyền vào là tensor các oscillator X: Chuẩn hóa trên từng oscillator
+            x_reshaped = x.reshape(num_nodes, -1, osc_dim)
+            x_norm = F.normalize(x_reshaped, p=2, dim=-1).reshape(
+                num_nodes, -1
+            )
+        else:
+            # Nếu là đặc trưng C (giống model_preds): Chuẩn hóa L2 toàn bộ chiều kênh
+            x_norm = F.normalize(x, p=2, dim=-1)
+    else:
+        x_norm = x
+
+    # 3. BƯỚC 2 CỦA TÁC GIẢ: ÁP DỤNG PCA GIẢM CHIỀU (như apply_pca_torch trong eval)
+    actual_pca_dim = min(pca_dim, num_nodes, D)
+    if use_pca and D > 3:
+        # Khớp PCA lên toàn bộ các node (tương đương apply_pca_torch của tác giả)
+        pca = PCA(n_components=actual_pca_dim, random_state=seed)
+        x_feat = pca.fit_transform(x_norm.numpy())  # [num_nodes, actual_pca_dim]
+        # Chuẩn hóa lại sau PCA để tích vô hướng tiếp tục tương đương Cosine Similarity
+        x_feat_tensor = F.normalize(torch.from_numpy(x_feat).float(), p=2, dim=-1)
+    else:
+        x_feat_tensor = x_norm
+        x_feat = x_norm.numpy()
+
+    # 4. MÃ HÓA MÀU SẮC NODE: LẤY 3 CHIỀU ĐẦU TIÊN CỦA PCA (PCA 1-3 -> RGB)
+    if x_feat.shape[1] >= 3:
+        colors = x_feat[:, :3]
+        # Chuẩn hóa min-max về [0, 1] cho mỗi kênh R, G, B
+        colors = (colors - colors.min(axis=0)) / (
+            colors.max(axis=0) - colors.min(axis=0) + 1e-8
+        )
+    elif x_feat.shape[1] == 2:
+        angles = np.arctan2(x_feat[:, 1], x_feat[:, 0])
+        norm_angles = (angles + np.pi) / (2 * np.pi)
+        colors = plt.cm.hsv(norm_angles)[:, :3]
+    else:
+        colors = plt.cm.viridis(x_feat[:, 0])[:, :3]
+
+    # 5. KHỞI TẠO ĐỒ THỊ NETWORKX VÀ TÍNH TRỌNG SỐ CẠNH (COSINE SIM TRÊN KHÔNG GIAN PCA)
+    G = nx.Graph()
+    G.add_nodes_from(range(num_nodes))
+
+    src = edge_index[0].numpy()
+    dst = edge_index[1].numpy()
+
+    edge_weights = []
+    edges_to_draw = []
+
+    for u, v in zip(src, dst):
+        if u < v:  # Đồ thị vô hướng
+            if osc_dim is not None and not use_pca:
+                # Nếu tính trực tiếp trên từng oscillator chưa qua PCA
+                u_osc = x_norm.reshape(num_nodes, -1, osc_dim)[u]
+                v_osc = x_norm.reshape(num_nodes, -1, osc_dim)[v]
+                sim = float(torch.sum(u_osc * v_osc, dim=-1).mean().item())
+            else:
+                # Tính Cosine Similarity trên không gian PCA (đúng chuẩn clustering eval của tác giả)
+                sim = float(torch.dot(x_feat_tensor[u], x_feat_tensor[v]).item())
+
+            print(sim)
+            # Chỉ giữ cạnh nếu độ đồng bộ lớn hơn ngưỡng
+            if sim > sim_threshold:
+                sim = sim + 5
+                G.add_edge(u, v, weight=sim)
+                edges_to_draw.append((u, v))
+                edge_weights.append(sim)
+
+    # 6. TÍNH VỊ TRÍ SPRING LAYOUT
+    # Các cạnh có trọng số sim cao sẽ kéo các node đồng bộ dính lại với nhau
+    pos = nx.spring_layout(G, weight="weight", seed=seed, iterations=120)
+
+    # 7. VẼ ĐỒ THỊ
+    fig, ax = plt.subplots(figsize=(10, 9))
+
+    # Vẽ Nodes
+    nx.draw_networkx_nodes(
+        G,
+        pos,
+        node_color=colors,
+        node_size=node_size,
+        edgecolors="black",
+        linewidths=1.0,
+        alpha=0.9,
+        ax=ax,
+    )
+
+    # Vẽ Nhãn Node
+    if show_node_labels:
+        if raw_labels is not None:
+            if isinstance(raw_labels, torch.Tensor):
+                raw_labels = raw_labels.cpu().tolist()
+            labels_dict = {i: str(raw_labels[i]) for i in range(num_nodes)}
+        else:
+            labels_dict = {i: str(i) for i in range(num_nodes)}
+
+        nx.draw_networkx_labels(
+            G,
+            pos,
+            labels=labels_dict,
+            font_size=8,
+            font_color="black",
+            font_weight="bold",
+            ax=ax,
+        )
+
+    # Vẽ Cạnh
+    if edges_to_draw:
+        widths = [w * 2.5 for w in edge_weights]
+        nx.draw_networkx_edges(
+            G,
+            pos,
+            edgelist=edges_to_draw,
+            width=widths,
+            edge_color=edge_weights,
+            edge_cmap=plt.cm.Greys,
+            edge_vmin=0.0,
+            edge_vmax=1.0,
+            alpha=0.6,
+            ax=ax,
+        )
+
+        # Vẽ Trọng số lên từng cạnh
+        if show_edge_weights:
+            edge_labels = {
+                (u, v): f"{G[u][v]['weight']:.2f}" for u, v in edges_to_draw
+            }
+            nx.draw_networkx_edge_labels(
+                G,
+                pos,
+                edge_labels=edge_labels,
+                font_size=7,
+                font_color="darkblue",
+                bbox=dict(
+                    boxstyle="round,pad=0.2",
+                    fc="white",
+                    ec="none",
+                    alpha=0.7,
+                ),
+                ax=ax,
+            )
+
+    # Thiết lập tiêu đề an toàn với biến `lt`
+    title_str = f"Spring Layout Phase Synchronization (Cosine Sim > {sim_threshold})"
+    if lt is not None:
+        l, t = lt
+        title_str += f"\nLayer L = {l}, Step T = {t}"
+    if use_pca:
+        title_str += f" | PCA Dim = {actual_pca_dim}"
+
+    ax.set_title(title_str, fontsize=12, fontweight="bold")
+    ax.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+
+from tqdm import tqdm
+# max_ = 0
+# k = None
+# for i in tqdm(qm9_dataset):
+#     if len(i.smiles) > max_:
+#         max_ = len(i.smiles)
+#         k = i
+
+# print(i)
+
+# sample = i
+sample = qm9_dataset[2000]
 print(sample)
 from rdkit.Chem import Draw
 from rdkit import Chem
@@ -200,14 +414,25 @@ m = Chem.MolFromSmiles(sample.smiles)
 img = Draw.MolToImage(m)
 plt.imshow(img)
 
-print(sample.x)
-outputs, track_osc = model(x = sample.x, edge_index = sample.edge_index, batch = None)
+outputs, reference, track_osc = ema(x = sample.x, edge_index = sample.edge_index, batch = None)
 
-print(outputs.shape)
+print(reference.shape)
 print([type(i) for i in track_osc])
-for i in track_osc[1:]:
-    visualize_pyg_spring_layout(
-        x = i[-1],
+visualize_pyg_spring_layout_2(
+        x = reference,
         edge_index=sample.edge_index,
-        raw_labels=sample.x[:, 5]
+        raw_labels=sample.x[:, 5],
+        lt = (-1, -1),
+        normalize=True,
+        sim_threshold=-1
     )
+
+for l in range(1, len(track_osc)):
+    for t in range(len(track_osc[l])):
+        visualize_pyg_spring_layout(
+            x = track_osc[l][t],
+            edge_index=sample.edge_index,
+            raw_labels=sample.x[:, 5],
+            lt=(l, t),
+            sim_threshold=0.5,
+        )

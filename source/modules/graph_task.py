@@ -44,10 +44,10 @@ class KuramotoGNN(nn.Module):
                 edge_dim=edge_dim
             )
 
-            if readout_type == "gat":
-                readout_layer = ReadoutGNN(in_dim=hidden_dim, out_dim=hidden_dim, osc_dim=osc_dim, readout_type=readout_type)
-            else:
-                raise NotImplementedError
+            # if readout_type == "gat":
+            readout_layer = ReadoutGNN(in_dim=hidden_dim, out_dim=hidden_dim, osc_dim=osc_dim, readout_type=readout_type)
+            # else:
+            #     raise NotImplementedError
 
             self.layers.append(nn.ModuleList([kuramoto_layer, readout_layer]))
 
@@ -75,7 +75,7 @@ class KuramotoGNN(nn.Module):
 
         grap_repr = global_add_pool(reference, batch=batch)
         output = self.out_layer(grap_repr)
-        return output, track_osc
+        return output, reference, track_osc
 
 
 

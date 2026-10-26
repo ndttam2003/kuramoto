@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.nn import GATv2Conv
+from torch_geometric.nn import GATv2Conv, GCNConv
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.linalg import norm
@@ -20,6 +20,11 @@ class ReadoutGNN(nn.Module):
             self.gnn = GATv2Conv(in_channels=in_dim,
                                  out_channels= out_dim * osc_dim
                                  )
+        elif readout_type == "gcn":
+            self.gnn = GCNConv(in_channels=in_dim,
+                                out_channels= out_dim * osc_dim
+                                )
+
         else:
             raise NotImplementedError
 

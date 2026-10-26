@@ -4,8 +4,8 @@ python visualize.py \
     --seed 593 \
     --epochs 500 \
     --lr 1e-3 \
-    --batchsize 128 \
-    --num_workers 2 \
+    --batchsize 256 \
+    --num_workers 3 \
     --L 1 \
     --T 8 \
     --message_passing_type attn \

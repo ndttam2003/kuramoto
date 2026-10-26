@@ -9,7 +9,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from source.data.qm9 import get_train_val_test
 from source.modules.graph_task import KuramotoGNN
-from source.utils import LinearWarmupScheduler, save_checkpoint, save_model
+from source.modules.gnn_with_embedding import NodeGNN, EdgeGNN
+from source.utils import save_checkpoint, save_model, LinearWarmupScheduler
+from transformers import get_cosine_schedule_with_warmup
 
 import accelerate
 from accelerate import Accelerator
@@ -38,6 +40,11 @@ def get_args():
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--seed", type=int, default=593)
     parser.add_argument("--epochs", type=int, default=500, help="num of epochs")
+
+    parser.add_argument("--model_name", type=str, required=True, help="KuramotoGNN, NodeGNN, EdgeGNN")
+    parser.add_argument("--gnn_layer_type", type=str, default="gcn")
+    parser.add_argument("--n_gnn_layers", type=int, default=3)
+
     # parser.add_argument(
     #     "--checkpoint_every",
     #     type=int,
@@ -75,12 +82,13 @@ def get_args():
 def train_one_epoch(model, ema, optimizer, loader, epoch, task, accelerator,  scheduler):
     model.train()
     epoch_loss = 0.0
+
     
     loss_function = nn.L1Loss()
 
     for data in tqdm(loader, desc=f"Epoch {epoch}: "):
         
-        outputs, track_osc = model(x = data.x, edge_index = data.edge_index, batch = data.batch)
+        outputs, reference, track_osc = model(x = data.x, edge_index = data.edge_index, batch = data.batch)
         targets = data.y[:, task].reshape(-1, 1)
         loss = loss_function(outputs, targets)
 
@@ -88,7 +96,7 @@ def train_one_epoch(model, ema, optimizer, loader, epoch, task, accelerator,  sc
         accelerator.backward(loss)
         optimizer.step()
 
-        scheduler.step()
+        scheduler.step()        
 
         ema.update()
 
@@ -107,7 +115,7 @@ def evaluate(model, loader, task, name, device):
     total_loss = 0
     for data in tqdm(loader, desc=f"Evaluate {name}: "):
         data = data.to(device)
-        outputs, track_osc = model(x = data.x, edge_index = data.edge_index, batch = data.batch)
+        outputs, reference, track_osc = model(x = data.x, edge_index = data.edge_index, batch = data.batch)
         targets = data.y[:, task].reshape(-1, 1)
         loss = loss_function(outputs, targets)
 
@@ -139,25 +147,67 @@ def main():
             logger = create_logger(jobdir)
     import json
     if accelerator.is_main_process:
-        logger.info(json.dumps(str(vars(args)), indent=4))
+        logger.info(json.dumps(vars(args), indent=4, ensure_ascii=False))
     train_loader, val_loader, test_loader = get_train_val_test(args.data_path, args.batchsize, num_workers=args.num_workers)
 
     if accelerator.is_main_process:
         writer = SummaryWriter(jobdir)
 
-    model = KuramotoGNN(
-        in_dim=11, 
-        osc_dim=args.osc_dim, 
-        final_dim=1, 
-        L=args.L, 
-        T=args.T, 
-        hidden_dim=args.hidden_dim,
-        message_passing_type = args.message_passing_type, 
-        num_head=args.num_head, 
-        gamma=args.gamma, 
-        edge_dim=0, 
-        readout_type=args.readout_type
-    )
+    if args.model_name == "KuramotoGNN":
+
+
+        model = KuramotoGNN(
+            in_dim=11, 
+            osc_dim=args.osc_dim, 
+            final_dim=1, 
+            L=args.L, 
+            T=args.T, 
+            hidden_dim=args.hidden_dim,
+            message_passing_type = args.message_passing_type, 
+            num_head=args.num_head, 
+            gamma=args.gamma, 
+            edge_dim=0, 
+            readout_type=args.readout_type
+        )
+    elif args.model_name == "NodeGNN":
+        model  = NodeGNN(
+            in_dim=11, 
+            osc_dim=args.osc_dim, 
+            final_dim=1, 
+            L=args.L, 
+            T=args.T, 
+            hidden_dim=args.hidden_dim,
+            n_gnn_layers= args.n_gnn_layers,
+            gnn_layer_type= args.gnn_layer_type,
+            message_passing_type = args.message_passing_type, 
+            num_head=args.num_head, 
+            gamma=args.gamma, 
+            edge_dim=0, 
+            readout_type=args.readout_type
+        )
+    elif args.model_name == "EdgeGNN":
+        model  = EdgeGNN(
+                    in_dim=11, 
+                    osc_dim=args.osc_dim, 
+                    final_dim=1, 
+                    L=args.L, 
+                    T=args.T, 
+                    hidden_dim=args.hidden_dim,
+                    n_gnn_layers= args.n_gnn_layers,
+                    gnn_layer_type= args.gnn_layer_type,
+                    message_passing_type = args.message_passing_type, 
+                    num_head=args.num_head, 
+                    gamma=args.gamma, 
+                    edge_dim=0, 
+                    readout_type=args.readout_type
+                )
+
+    else:
+        raise NotImplementedError
+
+    if accelerator.is_main_process:
+        logger.info(f"{model}")
+        # print(model)
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total number of basemodel parameters: {total_params}")
@@ -169,9 +219,11 @@ def main():
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
 
+    # scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_iters, num_training_steps=args.epochs * len(train_loader))
     model, optimizer, train_loader = accelerator.prepare(model, optimizer, train_loader)
+    
+    scheduler = LinearWarmupScheduler(optimizer=optimizer, warmup_iters=args.warmup_iters)
 
-    scheduler = LinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters)
 
     for epoch in range(0, args.epochs):
         total_loss = train_one_epoch(model, ema, optimizer, train_loader, epoch,  
@@ -194,9 +246,7 @@ def main():
             val_loss = evaluate(model=model, loader=val_loader, task=args.task, name="validation", device=device)
             writer.add_scalar("validation loss", val_loss, epoch)
             logger.info(f"[Epoch {epoch}] validation Loss: {val_loss:.4f}")
-            
-
-            
+                        
     if accelerator.is_main_process:
         test_loss = evaluate(model=model, loader=test_loader, task=args.task, name="test", device=device)
         writer.add_scalar("test loss", test_loss, epoch)
